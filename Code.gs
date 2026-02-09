@@ -1,14 +1,11 @@
 /**
  * スプレッドシート未完了アラームツール
- * 
- * 機能概要:
- * E列の日付を監視し、その日付から逆算して10日前、5日前、2日前に指定のメールアドレスへ通知を送ります。
- * シートにある行はすべて「未完了」として扱われます。
  */
 
 // 設定項目
 const CONFIG = {
   NOTIFICATION_EMAIL: 'reservation@wakamatuya.co.jp', // 通知先メールアドレス
+  TARGET_SHEET_NAME: '未完了リスト', // ★ここに対象のシート名を入力してください
   DATE_COLUMN_INDEX: 4, // E列は0始まりで4番目 (A=0, B=1, C=2, D=3, E=4)
   Check_Columns: {
     ID: 0,   // A列
@@ -22,11 +19,17 @@ const CONFIG = {
  * トリガー設定で毎日実行するようにしてください。
  */
 function checkDeadlinesAndNotify() {
-  const sheet = SpreadsheetApp.getActiveSheet();
+  // アクティブなシートではなく、名前指定でシートを取得するように変更
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(CONFIG.TARGET_SHEET_NAME);
+
+  if (!sheet) {
+    Logger.log(`エラー: シート「${CONFIG.TARGET_SHEET_NAME}」が見つかりませんでした。シート名を確認してください。`);
+    return;
+  }
+
   const data = sheet.getDataRange().getValues();
   const today = new Date();
-  
-  // 今日の日付の時間を00:00:00にリセット（日付のみの比較のため）
   today.setHours(0, 0, 0, 0);
 
   // 1行目はヘッダーと仮定して、2行目(インデックス1)からループ
@@ -34,18 +37,22 @@ function checkDeadlinesAndNotify() {
     const row = data[i];
     const dateValue = row[CONFIG.DATE_COLUMN_INDEX];
 
-    // E列が日付でない、または空の場合はスキップ
-    if (!dateValue || !(dateValue instanceof Date)) {
+    // E列が空の場合はスキップ
+    if (!dateValue) {
       continue;
     }
 
-    // E列の日付（期日）を取得し、時間をリセット
+    // 日付オブジェクトに変換（文字列の日付も許容するため）
     const targetDate = new Date(dateValue);
+
+    // 有効な日付かどうかのチェック
+    if (isNaN(targetDate.getTime())) {
+      continue;
+    }
+
     targetDate.setHours(0, 0, 0, 0);
 
     // 日数差を計算
-    // 計算式: (E列の期日 - 今日) = 残り日数
-    // 例: 期日が12/30で、今日が12/20の場合 → 10日 (つまり今日は期日の10日前)
     const diffTime = targetDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
@@ -63,7 +70,6 @@ function checkDeadlinesAndNotify() {
       subjectPrefix = "【2日前】";
       messageBody = "最終確認は出来てますか？";
     } else {
-      // 該当しない日数は何もしない
       continue;
     }
 
@@ -80,8 +86,8 @@ function sendNotificationEmail(row, daysLeft, subjectPrefix, customMessage, rowN
   const name = row[CONFIG.Check_Columns.NAME];
   const dateObj = row[CONFIG.Check_Columns.DATE];
   
-  // 日付のフォーマット (yyyy/MM/dd)
-  const dateString = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), "yyyy/MM/dd");
+  const validDateObj = (dateObj instanceof Date) ? dateObj : new Date(dateObj);
+  const dateString = Utilities.formatDate(validDateObj, Session.getScriptTimeZone(), "yyyy/MM/dd");
 
   const subject = `${subjectPrefix} 未完了タスクのアラーム通知`;
   
@@ -105,6 +111,4 @@ ID (A列): ${id}
     subject: subject,
     body: body
   });
-  
-  Logger.log(`メール送信完了: 行${rowNumber} - 残り${daysLeft}日`);
 }
